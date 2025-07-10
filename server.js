@@ -42,13 +42,23 @@ io.on('connection', (socket) => {
 
 // Rotas
 
-// Criar sala
+//Criar sala
 app.post('/create-room', async (req, res) => {
-  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const { code } = req.body;
+
+  // Verifica se já existe uma sala com esse código
+  const existingRoom = await Room.findOne({ code });
+  if (existingRoom) {
+    return res.status(400).json({ error: 'Código de sala já existe' });
+  }
+
+  // Cria a sala com o código enviado
   const room = new Room({ code });
   await room.save();
+
   res.json({ code });
 });
+
 
 // Entrar na sala
 app.post('/join-room', async (req, res) => {
