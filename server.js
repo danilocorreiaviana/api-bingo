@@ -15,15 +15,16 @@ const server = http.createServer(app);
 // WebSocket puro
 const wss = new WebSocket.Server({ server });
 
-// Mapas de salas e conexões
+// Mapas de salas, conexões e números sorteados
 const rooms = {}; // { SALA_X: [socket1, socket2] }
+const drawnNumbersPerRoom = {}; // { SALA_X: [1,5,10,...] }
 
 wss.on('connection', (socket) => {
   console.log('🔌 Cliente conectado');
 
   let roomJoined = null;
 
-  socket.on('message', (data) => {
+  socket.on('message', async (data) => {
     try {
       const msg = JSON.parse(data);
 
@@ -34,19 +35,50 @@ wss.on('connection', (socket) => {
         }
         rooms[roomJoined].push(socket);
         console.log(`➡️ Cliente entrou na sala ${roomJoined}`);
+
+        // Inicializa a lista de números sorteados se ainda não existir
+        if (!drawnNumbersPerRoom[roomJoined]) {
+          drawnNumbersPerRoom[roomJoined] = [];
+        }
       }
 
       if (msg.event === 'draw-number') {
-        const number = Math.floor(Math.random() * 100) + 1;
+        if (!roomJoined) return;
 
-        // Atualiza no banco
-        Room.findOneAndUpdate({ code: roomJoined }, { drawnNumber: number }).exec();
+        if (!drawnNumbersPerRoom[roomJoined]) {
+          drawnNumbersPerRoom[roomJoined] = [];
+        }
+
+        const alreadyDrawn = drawnNumbersPerRoom[roomJoined];
+
+        if (alreadyDrawn.length >= 75) {
+          const payload = JSON.stringify({
+            event: 'error',
+            data: 'Todos os números já foram sorteados',
+          });
+          socket.send(payload);
+          return;
+        }
+
+        let number;
+        do {
+          number = Math.floor(Math.random() * 75) + 1; // 1 a 75
+        } while (alreadyDrawn.includes(number));
+
+        drawnNumbersPerRoom[roomJoined].push(number);
+
+        // Atualiza o último número sorteado no banco
+        await Room.findOneAndUpdate(
+          { code: roomJoined },
+          { drawnNumber: number }
+        ).exec();
 
         const payload = JSON.stringify({
           event: 'new-number',
           data: number,
         });
 
+        // Envia para todos os clientes da sala
         rooms[roomJoined]?.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
             client.send(payload);
@@ -71,7 +103,7 @@ wss.on('connection', (socket) => {
 app.use(cors());
 app.use(express.json());
 
-// MongoDB
+// Conexão MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -119,7 +151,7 @@ app.get('/room/:code', async (req, res) => {
   });
 });
 
-// Inicializa servidor
+// Iniciar servidor
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
